@@ -1,0 +1,78 @@
+#!/usr/bin/perl
+use strict; use warnings;
+
+use DBI;
+use YAML qw/LoadFile/;
+use POSIX qw/setuid/;
+
+# su - postgres
+setuid(scalar getpwnam 'postgres');
+
+my($dbname, $port) = ($0 =~ /pg_replication_(\S+?)(?:_(\d+))/);
+$dbname ||= 'postgres';
+$port   ||= 5432;
+
+my $dsn = "dbi:Pg:host=/var/run/postgresql;dbname=$dbname;port=$port";
+
+my $dbh = DBI->connect($dsn, 'postgres', undef);
+my $stats = $dbh->selectall_arrayref("SELECT * FROM replication_info", {Slice => {}});
+
+
+if (defined $ARGV[0] && $ARGV[0] ne '') {
+    if ($ARGV[0] eq 'autoconf') {
+        print "no (autoconf not supported)\n";
+        exit(1);
+    }
+    elsif ($ARGV[0] eq 'config') {
+        graph_info();    
+    }
+}
+
+my $total_lsn_delay = 0;
+foreach my $node (@$stats){
+    next unless defined $node->{application_name};
+    print $node->{application_name} . "_sent_bytes.value "        . ( $node->{sent_bytes_lag}     // 0 ). "\n";
+    print $node->{application_name} . "_write_bytes.value "       . ( $node->{write_bytes_lag}    // 0 ). "\n";
+    print $node->{application_name} . "_flush_bytes.value "       . ( $node->{flush_bytes_lag}    // 0 ). "\n";
+    print $node->{application_name} . "_replay_bytes.value "      . ( $node->{replay_bytes_lag}   // 0 ). "\n";
+    print $node->{application_name} . "_restart_lsn_bytes.value " . ( $node->{slot_lsn_bytes_lag} // 0 ). "\n";
+
+    $total_lsn_delay += $node->{slot_lsn_bytes_lag};
+}
+
+sub graph_info {
+    print "graph_title PostgreSQL Replication Lag\n";
+    print "graph_vlabel Bytes\n";
+    print "graph_category PostgreSQL\n";
+    print "graph_info PostgreSQL replication lag\n";
+    print "graph_args --base 1024\n";
+
+    foreach my $node (@$stats){
+        next unless defined $node->{application_name};
+
+        print $node->{application_name} . "_sent_bytes.label $node->{application_name} [m] Sent\n";
+        print $node->{application_name} . "_sent_bytes.type GAUGE\n";
+        print $node->{application_name} . "_sent_bytes.draw LINE1\n";
+        print $node->{application_name} . "_sent_bytes.min 0\n";
+        print $node->{application_name} . "_write_bytes.label $node->{application_name} [m] Write\n";
+        print $node->{application_name} . "_write_bytes.type GAUGE\n";
+        print $node->{application_name} . "_write_bytes.draw LINE1\n";
+        print $node->{application_name} . "_write_bytes.min 0\n";
+        print $node->{application_name} . "_flush_bytes.label $node->{application_name} [s] Flush\n";
+        print $node->{application_name} . "_flush_bytes.type GAUGE\n";
+        print $node->{application_name} . "_flush_bytes.draw LINE1\n";
+        print $node->{application_name} . "_flush_bytes.min 0\n";
+        print $node->{application_name} . "_replay_bytes.label $node->{application_name} [s] Replay\n";
+        print $node->{application_name} . "_replay_bytes.type GAUGE\n";
+        print $node->{application_name} . "_replay_bytes.draw LINE1\n";
+        print $node->{application_name} . "_replay_bytes.min 0\n";
+        print $node->{application_name} . "_restart_lsn_bytes.label $node->{application_name} [s] Slot LSN\n";
+        print $node->{application_name} . "_restart_lsn_bytes.type GAUGE\n";
+        print $node->{application_name} . "_restart_lsn_bytes.draw LINE1\n";
+        print $node->{application_name} . "_restart_lsn_bytes.min 0\n";
+
+    }
+
+    exit(0);
+
+}
